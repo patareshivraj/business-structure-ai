@@ -1,0 +1,27 @@
+langgraph
+langchain
+langchain-community
+fastapi
+uvicorn
+pydantic
+tavily-python
+wikipedia
+beautifulsoup4
+requests
+newspaper3k
+lxml
+pandas
+numpy
+python-dotenv
+tqdm
+rich
+duckduckgo-search
+pypdf
+groq
+redis
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+responses
