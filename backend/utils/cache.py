@@ -5,6 +5,8 @@ import json
 from typing import Optional, Any
 import asyncio
 import logging
+from threading import Lock
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +27,9 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "bsi:")
 CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))  # Default 1 hour
 
-# In-memory fallback cache
+# In-memory fallback cache with thread safety
 MEMORY_CACHE = {}
+_CACHE_LOCK = Lock()  # Thread lock for memory cache operations
 
 
 class RedisCache:
@@ -143,27 +146,29 @@ _cache = RedisCache()
 
 def get_cache(key: str) -> Optional[Any]:
     """Synchronous cache get - for backward compatibility"""
-    try:
-        # Try to get from memory cache synchronously
-        return MEMORY_CACHE.get(key)
-    except Exception:
-        return None
+    with _CACHE_LOCK:
+        try:
+            return MEMORY_CACHE.get(key)
+        except Exception:
+            return None
 
 
 def set_cache(key: str, value: Any) -> None:
     """Synchronous cache set - for backward compatibility"""
-    try:
-        MEMORY_CACHE[key] = value
-    except Exception:
-        pass
+    with _CACHE_LOCK:
+        try:
+            MEMORY_CACHE[key] = value
+        except Exception:
+            pass
 
 
 def clear_cache(key: Optional[str] = None) -> None:
     """Clear specific key or entire cache"""
-    if key is None:
-        MEMORY_CACHE.clear()
-    else:
-        MEMORY_CACHE.pop(key, None)
+    with _CACHE_LOCK:
+        if key is None:
+            MEMORY_CACHE.clear()
+        else:
+            MEMORY_CACHE.pop(key, None)
 
 
 # -----------------------------

@@ -19,8 +19,21 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Initialize Tavily client
-client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+# Lazy-initialized client (avoid init with None key)
+_client = None
+
+
+def _get_tavily_client() -> TavilyClient:
+    """Get or create Tavily client with lazy initialization"""
+    global _client
+    if _client is None:
+        api_key = os.getenv("TAVILY_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "TAVILY_API_KEY is not set. Please configure it in your .env file."
+            )
+        _client = TavilyClient(api_key=api_key)
+    return _client
 
 # Default headers for requests
 HEADERS = {
@@ -169,7 +182,7 @@ def find_annual_report(company: str) -> Optional[str]:
         return None
     
     try:
-        results = client.search(
+        results = _get_tavily_client().search(
             query=f"{company} annual report investor relations pdf",
             max_results=5
         )
@@ -220,7 +233,7 @@ def research_company(company: str) -> List[str]:
     
     # ─── 1️⃣ Tavily Search ─────────────────────────────────────────────────────────
     try:
-        results = client.search(
+        results = _get_tavily_client().search(
             query=f"{company} India company business segments products services technologies",
             max_results=6
         )

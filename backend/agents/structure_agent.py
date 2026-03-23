@@ -17,8 +17,21 @@ logger = get_logger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Initialize Groq client
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Lazy-initialized client (avoid init with None key)
+_client = None
+
+
+def _get_groq_client() -> Groq:
+    """Get or create Groq client with lazy initialization"""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Please configure it in your .env file."
+            )
+        _client = Groq(api_key=api_key)
+    return _client
 
 # Available models (tried in order of preference)
 MODELS = [
@@ -225,7 +238,7 @@ DATA:
         try:
             logger.info(f"Attempting structure extraction with model: {model}")
             
-            response = client.chat.completions.create(
+            response = _get_groq_client().chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
                 temperature=0  # Deterministic output
