@@ -3,12 +3,10 @@
 import json
 import os
 import re
-import logging
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from groq import Groq
 
-from utils.rate_limiter import check_api_call_limit, increment_api_calls
 from utils.logger import get_logger
 
 # Setup logging
@@ -46,21 +44,21 @@ MODELS = [
 def extract_json(text: str) -> Dict[str, Any]:
     """
     Extract JSON from text response.
-    
+
     Args:
         text: Text containing JSON
-        
+
     Returns:
         Parsed JSON object
-        
+
     Raises:
-        Exception: If no valid JSON found
+        ValueError: If no valid JSON found
     """
     match = re.search(r"\{.*\}", text, re.DOTALL)
-    
+
     if not match:
         raise ValueError("No JSON found in response")
-    
+
     return json.loads(match.group())
 
 
@@ -69,23 +67,23 @@ def extract_json(text: str) -> Dict[str, Any]:
 def validate_items(items: List[Dict], research_text: str) -> List[Dict]:
     """
     Validate extracted items against research data to filter hallucinations.
-    
+
     Args:
         items: List of extracted structure items
         research_text: Original research data to validate against
-        
+
     Returns:
         List of validated items that exist in research text
     """
     valid = []
     research_lower = research_text.lower()
-    
+
     for item in items:
         name = item.get("name", "").lower()
-        
+
         if name and name in research_lower:
             valid.append(item)
-    
+
     logger.debug(f"Validated {len(items)} items, {len(valid)} passed")
     return valid
 
@@ -95,11 +93,11 @@ def validate_items(items: List[Dict], research_text: str) -> List[Dict]:
 def normalize_tree(tree: Dict[str, Any], max_depth: Optional[int] = None) -> Dict[str, Any]:
     """
     Normalize tree structure - removes empty nodes.
-    
+
     Args:
         tree: Raw tree structure from AI
         max_depth: Maximum depth to traverse (None = unlimited)
-        
+
     Returns:
         Cleaned tree structure
     """
@@ -108,25 +106,25 @@ def normalize_tree(tree: Dict[str, Any], max_depth: Optional[int] = None) -> Dic
             if node.get("children"):
                 return {"name": node["name"], "children": node["children"]}
             return node
-        
+
         if "name" not in node:
             return None
-        
+
         cleaned = {"name": node["name"]}
         children = node.get("children", [])
-        
+
         cleaned_children = []
-        
+
         for child in children:
             c = clean_node(child, depth + 1)
             if c:
                 cleaned_children.append(c)
-        
+
         if cleaned_children:
             cleaned["children"] = cleaned_children
-        
+
         return cleaned
-    
+
     return clean_node(tree)
 
 
@@ -136,27 +134,27 @@ def fallback_structure(company: str, research_text: str) -> Dict[str, Any]:
     """
     Generate a basic structure when AI fails.
     Uses keyword extraction from research text.
-    
+
     Args:
         company: Company name
         research_text: Research data to extract keywords from
-        
+
     Returns:
         Basic structure dictionary
     """
     logger.warning("Using fallback structure generation")
-    
+
     keywords = [
         "consulting", "digital", "engineering",
         "products", "services", "cloud", "ai"
     ]
-    
+
     found = []
-    
+
     for k in keywords:
         if k in research_text.lower():
             found.append({"name": k.capitalize()})
-    
+
     return {
         "name": company,
         "children": [
@@ -173,28 +171,28 @@ def fallback_structure(company: str, research_text: str) -> Dict[str, Any]:
 def extract_structure(company: str, research_data: List[str]) -> Dict[str, Any]:
     """
     Extract business structure from research data using AI.
-    
+
     Args:
         company: Company name
         research_data: List of research text from various sources
-        
+
     Returns:
         Hierarchical business structure as dictionary
     """
     logger.info(f"Extracting structure for: {company}")
-    
+
     # Limit research data to prevent token limit exceeded errors
     # Take top 5 sources and truncate each to 1500 chars
     research_text = "\n\n".join([t[:1500] for t in research_data[:5]])
-    
+
     logger.debug(f"Research text length: {len(research_text)} chars")
-    
+
     prompt = f"""
 You are a senior business analyst specializing in corporate structure analysis.
 
-Extract the ACTUAL organizational structure of the company from the given research data. 
-DO NOT use fixed categories. Discover what the company actually has - it could be divisions, 
-strategic business units, product lines, subsidiaries, subsidiaries, operating segments, etc.
+Extract the ACTUAL organizational structure of the company from the given research data.
+DO NOT use fixed categories. Discover what the company actually has - it could be divisions,
+strategic business units, product lines, subsidiaries, operating segments, etc.
 
 RULES:
 - Only use provided data - NEVER invent information not in the data
@@ -231,52 +229,50 @@ DATA:
 
     # Try each model in order
     for model in MODELS:
-        if not check_api_call_limit():
-            logger.warning("API call limit reached during structure extraction")
-            break
-            
         try:
             logger.info(f"Attempting structure extraction with model: {model}")
-            
+
             response = _get_groq_client().chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
                 temperature=0  # Deterministic output
             )
-            
-            increment_api_calls()
-            
+
+            if not response.choices:
+                logger.warning(f"Model {model} returned empty choices")
+                continue
+
             content = response.choices[0].message.content.strip()
-            
+
             logger.debug(f"AI response (first 500 chars): {content[:500]}")
-            
+
             data = extract_json(content)
-            
+
             # Validate extracted items against research data
             for category in data.get("children", []):
                 category["children"] = validate_items(
                     category.get("children", []),
                     research_text
                 )
-            
+
             # Remove empty categories
             data["children"] = [
                 c for c in data["children"] if c.get("children")
             ]
-            
+
             # Normalize tree
             data = normalize_tree(data)
-            
+
             if not data or not data.get("children"):
                 raise ValueError("Empty structure after validation")
-            
+
             logger.info(f"Structure extraction successful using {model}")
             return data
-            
+
         except Exception as e:
             logger.warning(f"Model {model} failed: {e}")
             continue
-    
+
     # All models failed, use fallback
     logger.error(f"All models failed for {company}, using fallback")
     return fallback_structure(company, research_text)

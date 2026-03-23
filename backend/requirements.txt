@@ -1,27 +1,36 @@
-langgraph
-langchain
-langchain-community
-fastapi
-uvicorn
-pydantic
-tavily-python
-wikipedia
-beautifulsoup4
-requests
-newspaper3k
-lxml
-pandas
-numpy
-python-dotenv
-tqdm
-rich
-duckduckgo-search
-pypdf
-groq
-redis
+# Core framework
+langgraph>=0.2,<1.0
+langchain>=0.3,<1.0
+langchain-community>=0.3,<1.0
+fastapi>=0.100,<1.0
+uvicorn>=0.30,<1.0
+pydantic>=2.0,<3.0
+
+# External APIs
+tavily-python>=0.3,<1.0
+groq>=0.4,<1.0
+
+# Web scraping
+beautifulsoup4>=4.12,<5.0
+requests>=2.31,<3.0
+lxml>=5.0,<6.0
+duckduckgo-search>=5.0,<7.0
+
+# Data processing
+wikipedia>=1.4,<2.0
+newspaper3k>=0.2,<1.0
+pypdf>=4.0,<5.0
+pandas>=2.0,<3.0
+numpy>=1.24,<3.0
+
+# Utilities
+python-dotenv>=1.0,<2.0
+tqdm>=4.65,<5.0
+rich>=13.0,<15.0
+redis>=5.0,<6.0
 
 # Testing
-pytest
-pytest-asyncio
-httpx
-responses
+pytest>=8.0,<9.0
+pytest-asyncio>=0.23,<1.0
+httpx>=0.27,<1.0
+responses>=0.25,<1.0

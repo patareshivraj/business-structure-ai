@@ -5,15 +5,15 @@ import sys
 import os
 import json
 from typing import Any, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for production log aggregation"""
-    
+
     def format(self, record: logging.LogRecord) -> str:
         log_data: Dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -21,21 +21,21 @@ class JSONFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno
         }
-        
+
         # Add exception info if present
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
-        
+
         # Add extra fields
         if hasattr(record, "extra"):
             log_data.update(record.extra)
-        
+
         return json.dumps(log_data)
 
 
 class HumanFormatter(logging.Formatter):
     """Human-readable formatter for development"""
-    
+
     def __init__(self):
         super().__init__(
             fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -43,63 +43,66 @@ class HumanFormatter(logging.Formatter):
         )
 
 
-def setup_logging(name: str = "bsi") -> logging.Logger:
+# Track whether root logging has been configured
+_logging_configured = False
+
+
+def setup_logging() -> None:
     """
-    Configure and return a logger for the application.
-    
-    Args:
-        name: Logger name (default: "bsi" for Business Structure Intelligence)
-        
-    Returns:
-        Configured logger instance
+    Configure the root logger for the application.
+    All modules using get_logger(__name__) will inherit this configuration.
     """
-    logger = logging.getLogger(name)
-    
-    # Avoid duplicate handlers
-    if logger.handlers:
-        return logger
-    
+    global _logging_configured
+    if _logging_configured:
+        return
+
+    _logging_configured = True
+
     # Determine environment
     environment = os.getenv("ENVIRONMENT", "development").lower()
     is_production = environment == "production"
-    
+
     # Set log level
     level = logging.DEBUG if not is_production else logging.INFO
-    logger.setLevel(level)
-    
+
+    # Configure root logger so all child loggers inherit
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    # Avoid duplicate handlers
+    if root_logger.handlers:
+        return
+
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
-    
+
     # Choose formatter based on environment
     if is_production:
         console_handler.setFormatter(JSONFormatter())
     else:
         console_handler.setFormatter(HumanFormatter())
-    
-    logger.addHandler(console_handler)
-    
+
+    root_logger.addHandler(console_handler)
+
     # Set third-party loggers to WARNING to reduce noise
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("requests").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-    
-    return logger
+    for noisy_logger in ["urllib3", "requests", "asyncio", "httpx", "httpcore"]:
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
 
-# Create application logger
-app_logger = setup_logging()
+# Configure logging on import
+setup_logging()
 
 
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger for a specific module.
-    
+
     Args:
         name: Module name (usually __name__)
-        
+
     Returns:
-        Logger instance
+        Logger instance (inherits root configuration)
     """
     return logging.getLogger(name)
 

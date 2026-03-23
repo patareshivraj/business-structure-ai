@@ -234,6 +234,7 @@ function AppInner() {
   const [maxDepth,  setMaxDepth]  = useState(0);
   const [darkMode,  setDarkMode]  = useState(true);
   const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState(null);
   const debounceRef = useRef(null);
 
   useEffect(() => { injectCSS(); }, []);
@@ -256,15 +257,22 @@ function AppInner() {
       const q = company.trim();
       if (!q) return;
       setLoading(true);
+      setError(null);
       try {
         const res  = await fetch(`${API_URL}/company/${encodeURIComponent(q)}/intelligence`);
-        if (!res.ok) throw new Error(`Status ${res.status}`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          const msg = errData?.error?.message || `Request failed with status ${res.status}`;
+          throw new Error(msg);
+        }
         const data = await res.json();
         setTreeData(data.structure);
         setCollapsed({});
         rebuildGraph(data.structure, {});
       } catch (err) {
-        alert("Backend error: " + err.message);
+        setError(err.message);
+        // Auto-dismiss after 8 seconds
+        setTimeout(() => setError(null), 8000);
       }
       setLoading(false);
     }, 400);
@@ -382,6 +390,28 @@ function AppInner() {
           <span style={{ color: T.subtextFg }}>{darkMode ? "Light" : "Dark"}</span>
         </button>
       </div>
+
+      {/* ── Error Toast ── */}
+      {error && (
+        <div style={{
+          position: "fixed", top: 68, left: "50%", transform: "translateX(-50%)",
+          zIndex: 100, padding: "10px 20px", borderRadius: 10,
+          background: darkMode ? "#3b1010" : "#fef2f2",
+          border: `1px solid ${darkMode ? "#7f1d1d" : "#fca5a5"}`,
+          color: darkMode ? "#fca5a5" : "#991b1b",
+          fontSize: 13, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
+          display: "flex", alignItems: "center", gap: 10,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+          animation: "fadeIn 0.2s ease-out",
+        }}>
+          <span>⚠️ {error}</span>
+          <button onClick={() => setError(null)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: darkMode ? "#fca5a5" : "#991b1b", fontSize: 16,
+            padding: "0 4px", lineHeight: 1,
+          }}>✕</button>
+        </div>
+      )}
 
       {/* ── Canvas ── */}
       <div style={{ flex: 1, position: "relative", minHeight: 0 }}>

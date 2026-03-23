@@ -1,7 +1,7 @@
 # backend/utils/config_validator.py - Startup configuration validation
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List
 from dataclasses import dataclass
 
 
@@ -18,13 +18,13 @@ class ConfigValidator:
     Validates required environment variables and API keys at startup.
     Fails fast with clear messages if required configuration is missing.
     """
-    
+
     # Required configuration keys (must be present)
     REQUIRED: List[str] = [
         "TAVILY_API_KEY",
         "GROQ_API_KEY",
     ]
-    
+
     # Optional configuration keys (will use defaults if missing)
     OPTIONAL: List[str] = [
         "REDIS_HOST",
@@ -33,39 +33,37 @@ class ConfigValidator:
         "REDIS_PASSWORD",
         "REDIS_PREFIX",
         "CACHE_TTL",
+        "CACHE_MAX_SIZE",
         "ALLOWED_ORIGINS",
         "HOST",
         "PORT",
         "ENVIRONMENT",
     ]
-    
+
     def __init__(self):
         self.errors: List[ConfigError] = []
         self.warnings: List[ConfigError] = []
-    
+
     def validate(self) -> bool:
         """
         Validate all configuration.
-        
+
         Returns:
             True if validation passes, False otherwise
-            
-        Raises:
-            SystemExit: If required configuration is missing
         """
         self._check_required()
         self._check_optional()
         self._check_api_key_format()
-        
+
         if self.errors:
             self._print_errors()
             return False
-        
+
         if self.warnings:
             self._print_warnings()
-        
+
         return True
-    
+
     def _check_required(self):
         """Check that all required environment variables are set"""
         for key in self.REQUIRED:
@@ -82,7 +80,7 @@ class ConfigValidator:
                     message=f"Required environment variable '{key}' is empty. "
                             f"Please provide a valid value."
                 ))
-    
+
     def _check_optional(self):
         """Check optional configuration and set defaults"""
         # Redis configuration validation
@@ -102,7 +100,7 @@ class ConfigValidator:
                     message=f"REDIS_PORT '{redis_port}' is not a valid integer. Using default.",
                     severity="warning"
                 ))
-        
+
         # Cache TTL validation
         cache_ttl = os.getenv("CACHE_TTL")
         if cache_ttl:
@@ -120,7 +118,7 @@ class ConfigValidator:
                     message=f"CACHE_TTL '{cache_ttl}' is not a valid integer. Using default.",
                     severity="warning"
                 ))
-    
+
     def _check_api_key_format(self):
         """Validate API key formats"""
         # Check Groq API key format (should be a valid format)
@@ -131,7 +129,7 @@ class ConfigValidator:
                 message="GROQ_API_KEY seems unusually short. Please verify it's correct.",
                 severity="warning"
             ))
-        
+
         # Check Tavily API key format
         tavily_key = os.getenv("TAVILY_API_KEY")
         if tavily_key and len(tavily_key) < 10:
@@ -140,9 +138,9 @@ class ConfigValidator:
                 message="TAVILY_API_KEY seems unusually short. Please verify it's correct.",
                 severity="warning"
             ))
-    
+
     def _print_errors(self):
-        """Print validation errors and exit"""
+        """Print validation errors"""
         print("\n" + "="*60)
         print("CONFIGURATION VALIDATION FAILED")
         print("="*60)
@@ -152,7 +150,7 @@ class ConfigValidator:
         print("="*60)
         print("\nTo fix this, add the missing variables to your .env file.")
         print("See .env.example for reference.\n")
-    
+
     def _print_warnings(self):
         """Print validation warnings"""
         print("\n" + "-"*60)
@@ -161,7 +159,7 @@ class ConfigValidator:
         for warning in self.warnings:
             print(f"  ⚠️  {warning.key}: {warning.message}")
         print("-"*60 + "\n")
-    
+
     def get_config_summary(self) -> Dict[str, str]:
         """Get a summary of current configuration for debugging"""
         summary = {}
@@ -181,9 +179,9 @@ class ConfigValidator:
 def validate_config() -> bool:
     """
     Convenience function to validate configuration.
-    
+
     Returns:
-        True if validation passes, raises SystemExit if it fails
+        True if validation passes, False otherwise
     """
     validator = ConfigValidator()
     return validator.validate()

@@ -1,12 +1,12 @@
-# backend/utils/cache.py - Async cache with Redis support and fallback
+# backend/utils/cache.py - Cache with Redis support and in-memory fallback with TTL
 
 import os
 import json
+import time
 from typing import Optional, Any
 import asyncio
 import logging
 from threading import Lock
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -26,24 +26,41 @@ REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "bsi:")
 CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))  # Default 1 hour
+CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "500"))  # Max in-memory entries
 
-# In-memory fallback cache with thread safety
-MEMORY_CACHE = {}
-_CACHE_LOCK = Lock()  # Thread lock for memory cache operations
+# In-memory fallback cache with TTL support and thread safety
+_MEMORY_CACHE = {}  # key -> {"value": ..., "expires_at": ...}
+_CACHE_LOCK = Lock()
+
+
+def _evict_expired():
+    """Remove expired entries from in-memory cache (call under lock)"""
+    now = time.time()
+    expired_keys = [k for k, v in _MEMORY_CACHE.items() if v["expires_at"] <= now]
+    for k in expired_keys:
+        del _MEMORY_CACHE[k]
+
+
+def _evict_oldest_if_full():
+    """Evict oldest entries if cache exceeds max size (call under lock)"""
+    if len(_MEMORY_CACHE) >= CACHE_MAX_SIZE:
+        # Remove the entry with the earliest expiration
+        oldest_key = min(_MEMORY_CACHE, key=lambda k: _MEMORY_CACHE[k]["expires_at"])
+        del _MEMORY_CACHE[oldest_key]
 
 
 class RedisCache:
     """Async Redis cache wrapper with fallback to in-memory"""
-    
+
     def __init__(self):
         self._client = None
         self._connected = False
-    
+
     async def connect(self):
         """Connect to Redis"""
         if not REDIS_AVAILABLE:
             return False
-        
+
         try:
             self._client = redis.Redis(
                 host=REDIS_HOST,
@@ -63,13 +80,13 @@ class RedisCache:
             logger.warning(f"Redis connection failed: {e}. Using in-memory cache.")
             self._connected = False
             return False
-    
+
     async def disconnect(self):
         """Disconnect from Redis"""
         if self._client:
             await self._client.close()
             self._connected = False
-    
+
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache"""
         # Use Redis if connected
@@ -80,10 +97,17 @@ class RedisCache:
                     return json.loads(value)
             except Exception as e:
                 logger.warning(f"Redis get failed: {e}")
-        
-        # Fallback to memory
-        return MEMORY_CACHE.get(key)
-    
+
+        # Fallback to memory with TTL check
+        with _CACHE_LOCK:
+            entry = _MEMORY_CACHE.get(key)
+            if entry and entry["expires_at"] > time.time():
+                return entry["value"]
+            elif entry:
+                # Expired — remove it
+                del _MEMORY_CACHE[key]
+        return None
+
     async def set(self, key: str, value: Any, ttl: int = CACHE_TTL) -> None:
         """Set value in cache"""
         # Use Redis if connected
@@ -98,10 +122,16 @@ class RedisCache:
                 return
             except Exception as e:
                 logger.warning(f"Redis set failed: {e}")
-        
-        # Fallback to memory
-        MEMORY_CACHE[key] = value
-    
+
+        # Fallback to memory with TTL
+        with _CACHE_LOCK:
+            _evict_expired()
+            _evict_oldest_if_full()
+            _MEMORY_CACHE[key] = {
+                "value": value,
+                "expires_at": time.time() + ttl
+            }
+
     async def delete(self, key: str) -> None:
         """Delete key from cache"""
         if self._connected and self._client:
@@ -109,9 +139,10 @@ class RedisCache:
                 await self._client.delete(f"{REDIS_PREFIX}{key}")
             except Exception as e:
                 logger.warning(f"Redis delete failed: {e}")
-        
-        MEMORY_CACHE.pop(key, None)
-    
+
+        with _CACHE_LOCK:
+            _MEMORY_CACHE.pop(key, None)
+
     async def clear(self, pattern: str = None) -> None:
         """Clear cache"""
         if self._connected and self._client:
@@ -127,13 +158,14 @@ class RedisCache:
                         await self._client.delete(*keys)
             except Exception as e:
                 logger.warning(f"Redis clear failed: {e}")
-        
-        if pattern:
-            for key in list(MEMORY_CACHE.keys()):
-                if pattern in key:
-                    del MEMORY_CACHE[key]
-        else:
-            MEMORY_CACHE.clear()
+
+        with _CACHE_LOCK:
+            if pattern:
+                for key in list(_MEMORY_CACHE.keys()):
+                    if pattern in key:
+                        del _MEMORY_CACHE[key]
+            else:
+                _MEMORY_CACHE.clear()
 
 
 # Global cache instance
@@ -145,30 +177,39 @@ _cache = RedisCache()
 # -----------------------------
 
 def get_cache(key: str) -> Optional[Any]:
-    """Synchronous cache get - for backward compatibility"""
+    """Synchronous cache get with TTL support"""
     with _CACHE_LOCK:
-        try:
-            return MEMORY_CACHE.get(key)
-        except Exception:
-            return None
+        _evict_expired()
+        entry = _MEMORY_CACHE.get(key)
+        if entry and entry["expires_at"] > time.time():
+            return entry["value"]
+        elif entry:
+            del _MEMORY_CACHE[key]
+        return None
 
 
-def set_cache(key: str, value: Any) -> None:
-    """Synchronous cache set - for backward compatibility"""
+def set_cache(key: str, value: Any, ttl: int = CACHE_TTL) -> None:
+    """Synchronous cache set with TTL and max size"""
     with _CACHE_LOCK:
-        try:
-            MEMORY_CACHE[key] = value
-        except Exception:
-            pass
+        _evict_expired()
+        _evict_oldest_if_full()
+        _MEMORY_CACHE[key] = {
+            "value": value,
+            "expires_at": time.time() + ttl
+        }
 
 
 def clear_cache(key: Optional[str] = None) -> None:
     """Clear specific key or entire cache"""
     with _CACHE_LOCK:
         if key is None:
-            MEMORY_CACHE.clear()
+            _MEMORY_CACHE.clear()
         else:
-            MEMORY_CACHE.pop(key, None)
+            _MEMORY_CACHE.pop(key, None)
+
+
+# Expose raw dict for testing (read-only reference)
+MEMORY_CACHE = _MEMORY_CACHE
 
 
 # -----------------------------
@@ -176,17 +217,17 @@ def clear_cache(key: Optional[str] = None) -> None:
 # -----------------------------
 
 async def get_cache_async(key: str) -> Optional[Any]:
-    """Async cache get - for use with async endpoints"""
+    """Async cache get"""
     return await _cache.get(key)
 
 
 async def set_cache_async(key: str, value: Any, ttl: int = CACHE_TTL) -> None:
-    """Async cache set - for use with async endpoints"""
+    """Async cache set"""
     await _cache.set(key, value, ttl)
 
 
 async def clear_cache_async(key: Optional[str] = None) -> None:
-    """Async cache clear - for use with async endpoints"""
+    """Async cache clear"""
     await _cache.clear(key)
 
 
