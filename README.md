@@ -11,7 +11,7 @@
 
 BSI researches companies from multiple data sources and uses AI to extract and visualize their organizational hierarchy as interactive tree diagrams.
 
-![BSI Demo]demo.png)
+![BSI Demo](docs/demo.png)
 
 ---
 
